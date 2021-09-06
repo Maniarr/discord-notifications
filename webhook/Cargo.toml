@@ -19,3 +19,4 @@ chrono = { version = "0.4", features = ["serde"] }
 env_logger = "*"
 log = "*"
 quick-xml = { version = "*", features = [ "serialize" ] }
+r2d2_redis = "0.14"

@@ -124,7 +124,7 @@ impl EventHandler for Handler {
                         match serde_json::from_str::<EventMessage>(payload) {
                             Ok(event) => {
                                 match event.event {
-                                    TwitchEvent::StreamOnline { broadcaster_user_id, broadcaster_user_name, started_at, ..} => {
+                                    TwitchEvent::StreamOnline { broadcaster_user_id, broadcaster_user_name, broadcaster_user_login, started_at, ..} => {
                                         if let Some(online_mapping) = self.twitch.get(&event.event_type) {
                                             if let Some(entries) = online_mapping.get(&broadcaster_user_id) {
                                                 let mut handlebars = Handlebars::new();
@@ -137,7 +137,7 @@ impl EventHandler for Handler {
                                             }
                                         }
                                     },
-                                    TwitchEvent::StreamOffline { broadcaster_user_id, broadcaster_user_name, .. } => {
+                                    TwitchEvent::StreamOffline { broadcaster_user_id, broadcaster_user_name, broadcaster_user_login, .. } => {
                                         if let Some(online_mapping) = self.twitch.get(&event.event_type) {
                                             if let Some(entries) = online_mapping.get(&broadcaster_user_id) {
                                                 let mut handlebars = Handlebars::new();

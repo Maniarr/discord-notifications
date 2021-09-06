@@ -21,6 +21,9 @@ use std::env;
 
 use actix_web::{middleware::Logger};
 
+use r2d2_redis::{r2d2, RedisConnectionManager};
+use r2d2_redis::redis::Commands;
+
 #[derive(Debug, Deserialize)]
 struct TwitchTransport {
     method: String,
@@ -173,30 +176,38 @@ async fn verify_youtube_webhook(youtube_query: web::Query<YoutubeQuery>, app: we
 }
 
 #[post("/webhooks/youtube")]
-async fn youtube_webhook(req: HttpRequest, body: Bytes, kafka: web::Data<Arc<FutureProducer>>, app: web::Data<YoutubeApp>) -> impl Responder {
+async fn youtube_webhook(req: HttpRequest, body: Bytes, kafka: web::Data<Arc<FutureProducer>>, redis: web::Data<r2d2::Pool<RedisConnectionManager>>, app: web::Data<YoutubeApp>) -> impl Responder {
     if !verify_youtube_signature(req.headers(), &body, app.hmac_secret.as_bytes()) {
         return HttpResponse::Unauthorized().finish();
     }
+
+    let mut redis = redis.into_inner().get().unwrap();
 
     if let Ok(youtube_feed) = quick_xml::de::from_str::<YoutubeFeed>(std::str::from_utf8(&body).unwrap()) {
         let producer = kafka.into_inner();
         
         for video in youtube_feed.entries {
-            match producer.send(
-                FutureRecord::to("youtube")
-                        .payload(&serde_json::to_string(&EventYoutubeVideo::from(&video)).unwrap())
-                        .key(&video.id),
-            Duration::from_secs(2),
-            ).await {
-                Ok(_) => {
+            let cache: Option<String> = redis.get(&video.id).unwrap();
 
-                },
-                Err(error) => {
-                    dbg!(error);
-                }
-            };
+            if cache.is_none() {
+                match producer.send(
+                    FutureRecord::to("youtube")
+                            .payload(&serde_json::to_string(&EventYoutubeVideo::from(&video)).unwrap())
+                            .key(&video.id),
+                Duration::from_secs(2),
+                ).await {
+                    Ok(_) => {
+                        let _: () = redis.set(&video.id, format!("{}", &video.published_at)).unwrap();
+                    },
+                    Err(error) => {
+                        dbg!(error);
+                    }
+                };
+            } else {
+                println!("video id {} already handled", &video.id);
+            }
         }
-        
+
         HttpResponse::Ok().finish()
     } else {
         HttpResponse::NotAcceptable().finish()
@@ -263,6 +274,11 @@ async fn main() -> std::io::Result<()> {
             Err(_) => None,
         };
 
+        let manager = RedisConnectionManager::new(env::var("REDIS_URL").expect("REDIS_URL not in environment")).unwrap();
+        let pool = r2d2::Pool::builder()
+            .build(manager)
+            .expect("Failed to build redis pool");
+
         let producer: FutureProducer = ClientConfig::new()
             .set("bootstrap.servers", env::var("BROKER_IP").expect("BROKER_IP not in environment"))
             .set("message.timeout.ms", "2000")
@@ -279,6 +295,7 @@ async fn main() -> std::io::Result<()> {
             .data(TwitchApp {
                 hmac_secret: env::var("TWITCH_HMAC_SECRET").expect("TWITCH_HMAC_SECRET not in environment"),
             })
+            .data(pool)
             .service(twitch_webhook)
             .service(verify_youtube_webhook)
             .service(youtube_webhook)
