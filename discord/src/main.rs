@@ -7,6 +7,8 @@ use serenity::{
 };
 use serenity::model::id::ChannelId;
 
+use futures::stream::StreamExt;
+
 use rdkafka::client::ClientContext;
 use rdkafka::config::{ClientConfig, RDKafkaLogLevel};
 use rdkafka::consumer::stream_consumer::StreamConsumer;
@@ -95,7 +97,6 @@ impl EventHandler for Handler {
         let consumer: StreamConsumer = ClientConfig::new()
             .set("group.id", "discord")
             .set("bootstrap.servers", &self.kafka.broker_ip)
-            .set("enable.partition.eof", "false")
             .set("session.timeout.ms", "6000")
             .set("enable.auto.commit", "true")
             .create()
@@ -107,10 +108,12 @@ impl EventHandler for Handler {
 
         let mut cache: HashMap<String, bool> = HashMap::new();
 
+        let mut stream = consumer.stream();
+
         loop {
-            match consumer.recv().await {
-                Err(e) => println!("Kafka error: {}", e),
-                Ok(m) => {
+            match stream.next().await {
+                Some(Err(e)) => println!("Kafka error: {}", e),
+                Some(Ok(m)) => {
                     let payload = match m.payload_view::<str>() {
                         None => "",
                         Some(Ok(s)) => s,
@@ -123,6 +126,7 @@ impl EventHandler for Handler {
                     if m.topic() == "twitch" {
                         match serde_json::from_str::<EventMessage>(payload) {
                             Ok(event) => {
+                                dbg!(&event);
                                 match event.event {
                                     TwitchEvent::StreamOnline { broadcaster_user_id, broadcaster_user_name, broadcaster_user_login, started_at, ..} => {
                                         if let Some(online_mapping) = self.twitch.get(&event.event_type) {
@@ -182,6 +186,9 @@ impl EventHandler for Handler {
                     }
 
                     consumer.commit_message(&m, CommitMode::Async).unwrap();
+                },
+                _ => {
+                    println!("nope");
                 }
             };
         }
@@ -190,6 +197,8 @@ impl EventHandler for Handler {
 
 #[tokio::main]
 async fn main() {
+    env_logger::init();
+    
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
 
     let config_content = std::fs::read_to_string("config.yml").expect("Failed to read config.yml");

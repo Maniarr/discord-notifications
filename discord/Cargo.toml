@@ -15,3 +15,6 @@ rdkafka = { version = "*", features = ["cmake-build"] }
 chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
 handlebars = "*"
+futures = "*"
+log = "*"
+env_logger = "*"

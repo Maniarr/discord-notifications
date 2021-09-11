@@ -618,7 +618,10 @@ name = "discord"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "env_logger",
+ "futures",
  "handlebars",
+ "log",
  "rdkafka",
  "serde",
  "serde_json",
