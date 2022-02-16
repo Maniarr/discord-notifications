@@ -1,0 +1,43 @@
+version: "3"
+
+services:
+  pulsar:
+    image: apachepulsar/pulsar:2.9.1
+    command: "bin/pulsar standalone"
+    volumes:
+      - pulsar:/pulsar/data
+
+  redis:
+    image: redis:6
+
+  webhook:
+    build:
+      context: webhook
+    restart: on-failure
+    environment:
+      - PULSAR_IP=pulsar:6650
+      - YOUTUBE_HMAC_SECRET=passwordpassword
+      # - YOUTUBE_VERIFY_TOKEN=
+      - TWITCH_HMAC_SECRET=s3cRe7s3cRe7
+      - LISTEN_ADDRESS=0.0.0.0:8011
+      - REDIS_URL=redis://redis
+    ports:
+      - 127.0.0.1:8011:8011
+    links:
+      - pulsar
+      - redis
+
+  discord:
+    build:
+      context: discord
+    restart: on-failure
+    environment:
+      - DISCORD_TOKEN=MjI0MTAzODk3MDQ2NzEyMzIw.V9PXBA.AtBDbzUqchwCbtmQXvnlIg2Dyzk
+      - PULSAR_IP=pulsar:6650
+    volumes:
+      - ./discord/config.yml:/opt/discord/config.yml
+    links:
+      - pulsar
+
+volumes:
+  pulsar: {}

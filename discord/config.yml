@@ -1,5 +1,4 @@
-kafka:
-  broker_ip: redpanda:29092
+pulsar:
   topics:
     - youtube
     - twitch
@@ -7,6 +6,8 @@ kafka:
 youtube:
   UCCCPCZNChQdGa9EkATeye4g: # France24
     89756262492803072: "@everyone ! **Clara** vient juste de poster une vidéo ! Regardez-la avec un bon thé ! <:TeaTime:773127989889073173>\n{{ video_link }}"
+  UCuLS5cbAG6fgBwega9RaG9A:
+    772962027730894919: "@everyone ! **Clara** vient juste de poster une vidéo ! Regardez-la avec un bon thé ! <:TeaTime:773127989889073173>\n{{ video_link }}"
 
 twitch:
   stream.online:
@@ -14,7 +15,7 @@ twitch:
       89756262492803072: "{{ broadcaster_name }} start his stream"
       89756262492803072: "Le live vient de se lancer, tu as juste le temps de préparer ton thé avant que **Clara** arrive. Alors dépêche toi ! <:TeaTime:773127989889073173>\nhttps://twitch.tv/{{ broadcaster_login }}"
     450771047: # Clararunaway
-      772962027730894919: "Le live vient de se lancer, tu as juste le temps de préparer ton thé avant que **Clara** arrive. Alors dépêche toi ! <:TeaTime:773127989889073173>\nhttps://twitch.tv/{{ broadcaster_login }}"
+      772961879010050111: "@everyone Le live vient de se lancer, tu as juste le temps de préparer ton thé avant que **Clara** arrive. Alors dépêche toi ! <:TeaTime:773127989889073173>\nhttps://twitch.tv/{{ broadcaster_login }}"
   stream.offline:
     86831929: # Maniarr_
       89756262492803072: "{{ broadcaster_name }} stop his stream"

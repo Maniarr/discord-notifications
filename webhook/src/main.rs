@@ -12,17 +12,21 @@ use hmac::{Hmac, Mac, NewMac};
 use std::sync::Arc;
 
 use std::time::Duration;
-use rdkafka::{
-    config::ClientConfig,
-    producer::{FutureProducer, FutureRecord},
-};
-
 use std::env;
 
 use actix_web::{middleware::Logger};
 
 use r2d2_redis::{r2d2, RedisConnectionManager};
 use r2d2_redis::redis::Commands;
+
+use futures::TryStreamExt;
+use pulsar::{
+    Producer,
+    message::proto::command_subscribe::SubType, message::Payload, Consumer, consumer::{ ConsumerOptions, InitialPosition }, DeserializeMessage,
+    Pulsar, TokioExecutor, SerializeMessage, Error as PulsarError, producer, MultiTopicProducer,
+}; 
+
+type PulsarState = Arc<Pulsar<TokioExecutor>>;
 
 #[derive(Debug, Deserialize)]
 struct TwitchTransport {
@@ -69,6 +73,7 @@ struct EventYoutubeVideo {
     updated_at: chrono::DateTime<chrono::Utc>
 }
 
+
 impl From<&YoutubeVideo> for EventYoutubeVideo {
     fn from(video: &YoutubeVideo) -> Self {
         Self {
@@ -80,6 +85,26 @@ impl From<&YoutubeVideo> for EventYoutubeVideo {
             published_at: video.published_at,
             updated_at: video.updated_at,
         }
+    }
+}
+
+impl SerializeMessage for EventMessage {
+    fn serialize_message(input: Self) -> Result<producer::Message, PulsarError> {
+        let payload = serde_json::to_vec(&input).map_err(|e| PulsarError::Custom(e.to_string()))?;
+        Ok(producer::Message {
+            payload,
+            ..Default::default()
+        })
+    }
+}
+
+impl SerializeMessage for EventYoutubeVideo {
+    fn serialize_message(input: Self) -> Result<producer::Message, PulsarError> {
+        let payload = serde_json::to_vec(&input).map_err(|e| PulsarError::Custom(e.to_string()))?;
+        Ok(producer::Message {
+            payload,
+            ..Default::default()
+        })
     }
 }
 
@@ -176,7 +201,7 @@ async fn verify_youtube_webhook(youtube_query: web::Query<YoutubeQuery>, app: we
 }
 
 #[post("/webhooks/youtube")]
-async fn youtube_webhook(req: HttpRequest, body: Bytes, kafka: web::Data<Arc<FutureProducer>>, redis: web::Data<r2d2::Pool<RedisConnectionManager>>, app: web::Data<YoutubeApp>) -> impl Responder {
+async fn youtube_webhook(req: HttpRequest, body: Bytes, pulsar: web::Data<PulsarState>, redis: web::Data<r2d2::Pool<RedisConnectionManager>>, app: web::Data<YoutubeApp>) -> impl Responder {
     if !verify_youtube_signature(req.headers(), &body, app.hmac_secret.as_bytes()) {
         return HttpResponse::Unauthorized().finish();
     }
@@ -184,25 +209,36 @@ async fn youtube_webhook(req: HttpRequest, body: Bytes, kafka: web::Data<Arc<Fut
     let mut redis = redis.into_inner().get().unwrap();
 
     if let Ok(youtube_feed) = quick_xml::de::from_str::<YoutubeFeed>(std::str::from_utf8(&body).unwrap()) {
-        let producer = kafka.into_inner();
-        
         for video in youtube_feed.entries {
             let cache: Option<String> = redis.get(&video.id).unwrap();
-
+        
             if cache.is_none() {
-                match producer.send(
-                    FutureRecord::to("youtube")
-                            .payload(&serde_json::to_string(&EventYoutubeVideo::from(&video)).unwrap())
-                            .key(&video.id),
-                Duration::from_secs(2),
-                ).await {
-                    Ok(_) => {
-                        let _: () = redis.set(&video.id, format!("{}", &video.published_at)).unwrap();
-                    },
-                    Err(error) => {
-                        dbg!(error);
+                match pulsar
+                    .producer()
+                    .with_name("webhook_youtube")
+                    .with_topic("notifications_youtube")
+                    .build()
+                    .await {
+                        Ok(mut producer) => {
+                            match producer.send(EventYoutubeVideo::from(&video)).await {
+                                Ok(promise) => {
+                                    dbg!(promise.await);
+
+                                    drop(producer);
+        
+                                    let _: () = redis.set(&video.id, format!("{}", &video.published_at)).unwrap();
+                                },
+                                Err(e) => {
+                                    log::error!("could not get promise to send to pulsar: {:?}", e);
+                                    return HttpResponse::InternalServerError().finish();
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            log::error!("Failed to build pulsar producer: {:?}", e);
+                            return HttpResponse::InternalServerError().finish();
+                        }
                     }
-                };
             } else {
                 println!("video id {} already handled", &video.id);
             }
@@ -216,7 +252,7 @@ async fn youtube_webhook(req: HttpRequest, body: Bytes, kafka: web::Data<Arc<Fut
 
 
 #[post("/webhooks/twitch")]
-async fn twitch_webhook(req: HttpRequest, body: Bytes, kafka: web::Data<Arc<FutureProducer>>, twitch: web::Data<TwitchApp>) -> impl Responder {
+async fn twitch_webhook(req: HttpRequest, body: Bytes, pulsar: web::Data<PulsarState>, twitch: web::Data<TwitchApp>) -> impl Responder {
     if !verify_twitch_signature(req.headers(), &body, &twitch.hmac_secret) {
         return HttpResponse::Unauthorized().finish();
     }
@@ -226,30 +262,37 @@ async fn twitch_webhook(req: HttpRequest, body: Bytes, kafka: web::Data<Arc<Futu
             return HttpResponse::Ok().body(challenge);
         }
 
-        let producer = kafka.into_inner();
-
-        match dbg!(producer.send(
-            FutureRecord::to("twitch")
-                .payload(&serde_json::to_string(&EventMessage {
+        match pulsar
+            .producer()
+            .with_name("webhook_twitch")
+            .with_topic("notifications_twitch")
+            .build()
+            .await {
+            Ok(mut producer) => {
+                match producer.send(EventMessage {
                     event_type: twitch_callback.subscription.event_type,
                     event: twitch_callback.event.unwrap(),
                     triggered_at: chrono::Utc::now(),
-                }).unwrap())
-                .key(""),
-            Duration::from_secs(2),
-        ).await) {
-            Ok(_) => {
+                }).await {
+                    Ok(promise) => {
+                        dbg!(promise.await);
 
+                        drop(producer);
+
+                        return HttpResponse::Ok().finish();
+                    },
+                    Err(e) => {
+                        log::error!("could not get promise to send to pulsar: {:?}", e);
+                    }
+                }
             },
-            Err(error) => {
-                dbg!(error);
+            Err(e) => {
+                log::error!("Failed to build pulsar producer: {:?}", e);
             }
         };
-
-        return HttpResponse::Ok().finish();
-    } else {
-        return HttpResponse::InternalServerError().finish();
     }
+
+    return HttpResponse::InternalServerError().finish();
 }
 
 #[derive(Debug)]
@@ -268,26 +311,17 @@ async fn main() -> std::io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
 
-    HttpServer::new(|| {
+    let pulsar: Pulsar<_> = Pulsar::builder(env::var("PULSAR_URL").expect("PULSAR_URL not in environment"), TokioExecutor).build().await.expect("Failed to create pulsar builder");    
+
+    HttpServer::new(move || {
         let verify_token = match env::var("YOUTUBE_VERIFY_TOKEN") {
             Ok(token) => Some(token),
             Err(_) => None,
         };
-
-        let manager = RedisConnectionManager::new(env::var("REDIS_URL").expect("REDIS_URL not in environment")).unwrap();
-        let pool = r2d2::Pool::builder()
-            .build(manager)
-            .expect("Failed to build redis pool");
-
-        let producer: FutureProducer = ClientConfig::new()
-            .set("bootstrap.servers", env::var("BROKER_IP").expect("BROKER_IP not in environment"))
-            .set("message.timeout.ms", "2000")
-            .create()
-            .expect("Producer creation error");
     
         App::new()
             .wrap(Logger::default())
-            .data( Arc::new(producer))
+            .data(Arc::new(pulsar.clone()))
             .data(YoutubeApp {
                 verify_token: verify_token.clone(),
                 hmac_secret: env::var("YOUTUBE_HMAC_SECRET").expect("YOUTUBE_HMAC_SECRET not in environment"),
@@ -295,7 +329,6 @@ async fn main() -> std::io::Result<()> {
             .data(TwitchApp {
                 hmac_secret: env::var("TWITCH_HMAC_SECRET").expect("TWITCH_HMAC_SECRET not in environment"),
             })
-            .data(pool)
             .service(twitch_webhook)
             .service(verify_youtube_webhook)
             .service(youtube_webhook)

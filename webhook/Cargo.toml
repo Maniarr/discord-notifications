@@ -14,9 +14,11 @@ hmac-sha1 = "*"
 hmac = "*"
 sha2 = "*"
 hex = "*"
-rdkafka = { version = "0.25", features = ["cmake-build"] }
 chrono = { version = "0.4", features = ["serde"] }
 env_logger = "*"
 log = "*"
 quick-xml = { version = "*", features = [ "serialize" ] }
 r2d2_redis = "0.14"
+futures = "0.3"
+pulsar = "4.0"
+tokio = { version = "1", features = ["full"] }
