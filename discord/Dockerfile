@@ -1,22 +1,23 @@
-FROM rust:1.54-slim as builder
+FROM rust:1.58-slim-buster as builder
 
 RUN apt-get update
+RUN apt-get install -y libssl-dev build-essential zlib1g-dev pkg-config
 
-RUN apt-get install -y cmake librdkafka-dev g++
+COPY . /workspace
 
-RUN mkdir -p /opt/builder
-
-COPY . /opt/builder
-
-WORKDIR /opt/builder
+WORKDIR /workspace
 
 RUN cargo build --release
 
 FROM debian:buster-slim
 
+RUN apt-get update && apt-get install -y ca-certificates
+
+RUN update-ca-certificates --fresh
+
 RUN mkdir -p /opt/discord
 
-COPY --from=builder /opt/builder/target/release/discord /opt/discord
+COPY --from=builder /workspace/target/release/discord /opt/discord
 
 WORKDIR /opt/discord
 

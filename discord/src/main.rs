@@ -9,12 +9,6 @@ use serenity::model::id::ChannelId;
 
 use futures::stream::StreamExt;
 
-use rdkafka::client::ClientContext;
-use rdkafka::config::{ClientConfig, RDKafkaLogLevel};
-use rdkafka::consumer::stream_consumer::StreamConsumer;
-use rdkafka::consumer::{CommitMode, Consumer, ConsumerContext, Rebalance};
-use rdkafka::message::Message;
-
 use serde::{Deserialize, Serialize};
 use serde_json::{
     json,
@@ -23,6 +17,12 @@ use serde_json::{
 use std::collections::HashMap;
 
 use handlebars::Handlebars;
+use futures::TryStreamExt;
+use pulsar::{
+    Producer,
+    message::proto::command_subscribe::SubType, message::Payload, Consumer, consumer::{ ConsumerOptions, InitialPosition }, DeserializeMessage,
+    Pulsar, TokioExecutor, SerializeMessage, Error as PulsarError, producer, MultiTopicProducer,
+}; 
 
 #[derive(Debug, Deserialize, Serialize)]
 struct EventMessage {
@@ -69,134 +69,114 @@ struct EventYoutubeVideo {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct KafkaConfiguration {
-    broker_ip: String,
-    topics: Vec<String>,
+#[serde(untagged)]
+enum MessageEvent {
+    Twitch(EventMessage),
+    Youtube(EventYoutubeVideo)
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 struct Handler {
     youtube: HashMap<String, HashMap<u64, String>>,
     twitch: HashMap<String, HashMap<String, HashMap<u64, String>>>,
-    kafka: KafkaConfiguration,
+}
+
+impl DeserializeMessage for MessageEvent {
+    type Output = Result<MessageEvent, serde_json::Error>;
+
+    fn deserialize_message(payload: &Payload) -> Self::Output {
+        serde_json::from_slice(&payload.data)
+    }
 }
 
 #[async_trait]
 impl EventHandler for Handler {
-    async fn message(&self, ctx: Context, msg: DiscordMessage) {
-        if msg.content == "!ping" {
-            if let Err(why) = msg.channel_id.say(&ctx.http, "Pong!").await {
-                println!("Error sending message: {:?}", why);
-            }
-        }
-    }
-
     async fn ready(&self, ctx: Context, ready: Ready) {
         println!("{} is connected!", ready.user.name);
 
-        let consumer: StreamConsumer = ClientConfig::new()
-            .set("group.id", "discord")
-            .set("bootstrap.servers", &self.kafka.broker_ip)
-            .set("session.timeout.ms", "6000")
-            .set("enable.auto.commit", "true")
-            .create()
-            .expect("Consumer creation failed");
+        let pulsar: Pulsar<_> = Pulsar::builder(env::var("PULSAR_URL").expect("PULSAR_URL variable not provided"), TokioExecutor).build().await.expect("Failed to build pulsar client");
 
-        consumer
-            .subscribe(&self.kafka.topics.iter().map(|i| i.as_str()).collect::<Vec<&str>>())
-            .expect("Can't subscribe to specified topics");
+        let mut consumer: Consumer<MessageEvent, _> = pulsar
+            .consumer()
+            .with_topics(["notifications_youtube", "notifications_twitch"])
+            .with_consumer_name("discord_notifications")
+            .with_subscription_type(SubType::Shared)
+            .with_subscription("discord_notifications")
+            .with_batch_size(10)
+            .build()
+            .await
+            .expect("Failed to build pulsar consumer");
 
         let mut cache: HashMap<String, bool> = HashMap::new();
 
-        let mut stream = consumer.stream();
-
-        loop {
-            match stream.next().await {
-                Some(Err(e)) => println!("Kafka error: {}", e),
-                Some(Ok(m)) => {
-                    let payload = match m.payload_view::<str>() {
-                        None => "",
-                        Some(Ok(s)) => s,
-                        Some(Err(e)) => {
-                            println!("Error while deserializing message payload: {:?}", e);
-                            ""
-                        }
-                    };
-
-                    if m.topic() == "twitch" {
-                        match serde_json::from_str::<EventMessage>(payload) {
-                            Ok(event) => {
-                                dbg!(&event);
-                                match event.event {
-                                    TwitchEvent::StreamOnline { broadcaster_user_id, broadcaster_user_name, broadcaster_user_login, started_at, ..} => {
-                                        if let Some(online_mapping) = self.twitch.get(&event.event_type) {
-                                            if let Some(entries) = online_mapping.get(&broadcaster_user_id) {
-                                                let mut handlebars = Handlebars::new();
-                                                handlebars.register_escape_fn(handlebars::no_escape);
-                                                
-                                                for (channel_id, message_format) in entries {
-                                                    ChannelId(channel_id.clone()).say(&ctx.http, handlebars.render_template(message_format, &json!({"broadcaster_name": broadcaster_user_name, "broadcaster_login": broadcaster_user_login})).unwrap()).await;
-                                                }
-                                    
-                                            }
-                                        }
-                                    },
-                                    TwitchEvent::StreamOffline { broadcaster_user_id, broadcaster_user_name, broadcaster_user_login, .. } => {
-                                        if let Some(online_mapping) = self.twitch.get(&event.event_type) {
-                                            if let Some(entries) = online_mapping.get(&broadcaster_user_id) {
-                                                let mut handlebars = Handlebars::new();
-                                                handlebars.register_escape_fn(handlebars::no_escape);
-                                                
-                                                for (channel_id, message_format) in entries {
-                                                    ChannelId(channel_id.clone()).say(&ctx.http, handlebars.render_template(message_format, &json!({"broadcaster_name": broadcaster_user_name})).unwrap()).await;
-                                                }
-                                            }
-                                        }
-                                    },
-                                };
-                            },
-                            Err(error) => {
-
+        while let Some(message) = consumer.try_next().await.expect("Failed to consume message") {
+            log::info!("metadata: {:?}", message.metadata());
+            log::info!("id: {:?}", message.message_id());
+        
+            match message.deserialize() {
+                Ok(MessageEvent::Youtube(video)) => {
+                    if !cache.contains_key(&video.id) {
+                        if let Some(entries) = self.youtube.get(video.channel_id.as_str()) {
+                            let mut handlebars = Handlebars::new();
+                            handlebars.register_escape_fn(handlebars::no_escape);
+                                
+                            for (channel_id, message_format) in entries {
+                                ChannelId(channel_id.clone()).say(&ctx.http, handlebars.render_template(message_format, &json!({"video_link": video.link})).unwrap()).await;
                             }
-                        };
+
+                            consumer.ack(&message).await;
+
+                            cache.insert(video.id.clone(),true);
+                        } else {
+                            println!("Channel id not found in youtube mapping {}", &video.channel_id);
+                        }
                     } else {
-                        match serde_json::from_str::<EventYoutubeVideo>(payload) {
-                            Ok(video) => {
-                                if !cache.contains_key(&video.id) {
-                                    if let Some(entries) = self.youtube.get(video.channel_id.as_str()) {
-                                        let mut handlebars = Handlebars::new();
-                                        handlebars.register_escape_fn(handlebars::no_escape);
-                                        
-                                        for (channel_id, message_format) in entries {
-                                            ChannelId(channel_id.clone()).say(&ctx.http, handlebars.render_template(message_format, &json!({"video_link": video.link})).unwrap()).await;
-                                        }
-
-                                        cache.insert(video.id.clone(),true);
-                                    } else {
-                                        println!("Channel id not found in youtube mapping {}", &video.channel_id);
-                                    }
-                                } else {
-                                    println!("Video in cache, skip the message");
-                                }
-                            },
-                            Err(error) => {
-
-                            }
-                        }
+                         println!("Video in cache, skip the message");
                     }
-
-                    consumer.commit_message(&m, CommitMode::Async).unwrap();
                 },
-                _ => {
-                    println!("nope");
+                Ok(MessageEvent::Twitch(event)) => {
+                    match event.event {
+                        TwitchEvent::StreamOnline { broadcaster_user_id, broadcaster_user_name, broadcaster_user_login, started_at, ..} => {
+                            if let Some(online_mapping) = self.twitch.get(&event.event_type) {
+                                if let Some(entries) = online_mapping.get(&broadcaster_user_id) {
+                                    let mut handlebars = Handlebars::new();
+                                    handlebars.register_escape_fn(handlebars::no_escape);
+                                                
+                                    for (channel_id, message_format) in entries {
+                                        ChannelId(channel_id.clone()).say(&ctx.http, handlebars.render_template(message_format, &json!({"broadcaster_name": broadcaster_user_name, "broadcaster_login": broadcaster_user_login})).unwrap()).await;
+                                    }
+                                                
+                                    consumer.ack(&message).await;
+                                }
+                            }
+                        },
+                        TwitchEvent::StreamOffline { broadcaster_user_id, broadcaster_user_name, broadcaster_user_login, .. } => {
+                            if let Some(online_mapping) = self.twitch.get(&event.event_type) {
+                                if let Some(entries) = online_mapping.get(&broadcaster_user_id) {
+                                    let mut handlebars = Handlebars::new();
+                                    handlebars.register_escape_fn(handlebars::no_escape);
+                                    
+                                    for (channel_id, message_format) in entries {
+                                        ChannelId(channel_id.clone()).say(&ctx.http, handlebars.render_template(message_format, &json!({"broadcaster_name": broadcaster_user_name})).unwrap()).await;
+                                    }
+
+                                    consumer.ack(&message).await;
+                                }
+                            }
+                        },
+                    }
+                },
+                Err(error) => {
+                    log::error!("{}", error);
                 }
-            };
+            }
         }
     }
 }
 
 #[tokio::main]
 async fn main() {
+    std::env::set_var("RUST_LOG", "info");
     env_logger::init();
     
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");

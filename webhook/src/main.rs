@@ -1,4 +1,4 @@
-use actix_web::{post, get, web, App, HttpServer, Responder, HttpRequest, web::Bytes, HttpResponse, http::HeaderMap};
+use actix_web::{post, get, web::{self, Data}, App, HttpServer, Responder, HttpRequest, web::Bytes, HttpResponse, http::header::{ self, HeaderMap }};
 
 use serde_json::{
     self,
@@ -7,7 +7,7 @@ use serde_json::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use hmac::{Hmac, Mac, NewMac};
+use hmac::{Hmac, Mac};
 
 use std::sync::Arc;
 
@@ -308,7 +308,7 @@ struct TwitchApp {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    std::env::set_var("RUST_LOG", "actix_web=info");
+    std::env::set_var("RUST_LOG", "info,actix_web=info");
     env_logger::init();
 
     let pulsar: Pulsar<_> = Pulsar::builder(env::var("PULSAR_URL").expect("PULSAR_URL not in environment"), TokioExecutor).build().await.expect("Failed to create pulsar builder");    
@@ -321,14 +321,14 @@ async fn main() -> std::io::Result<()> {
     
         App::new()
             .wrap(Logger::default())
-            .data(Arc::new(pulsar.clone()))
-            .data(YoutubeApp {
+            .app_data(Data::new(Arc::new(pulsar.clone())))
+            .app_data(Data::new(YoutubeApp {
                 verify_token: verify_token.clone(),
                 hmac_secret: env::var("YOUTUBE_HMAC_SECRET").expect("YOUTUBE_HMAC_SECRET not in environment"),
-            })
-            .data(TwitchApp {
+            }))
+            .app_data(Data::new(TwitchApp {
                 hmac_secret: env::var("TWITCH_HMAC_SECRET").expect("TWITCH_HMAC_SECRET not in environment"),
-            })
+            }))
             .service(twitch_webhook)
             .service(verify_youtube_webhook)
             .service(youtube_webhook)

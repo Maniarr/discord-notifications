@@ -3,9 +3,9 @@ version: "3"
 services:
   pulsar:
     image: apachepulsar/pulsar:2.9.1
-    command: "bin/pulsar standalone"
-    volumes:
-      - pulsar:/pulsar/data
+    environment:
+      - PULSAR_MEM=-Xms512m -Xmx512m -XX:MaxDirectMemorySize=1g
+    command: bin/pulsar standalone
 
   redis:
     image: redis:6
@@ -15,7 +15,7 @@ services:
       context: webhook
     restart: on-failure
     environment:
-      - PULSAR_IP=pulsar:6650
+      - PULSAR_URL=pulsar://pulsar:6650
       - YOUTUBE_HMAC_SECRET=passwordpassword
       # - YOUTUBE_VERIFY_TOKEN=
       - TWITCH_HMAC_SECRET=s3cRe7s3cRe7
@@ -33,7 +33,7 @@ services:
     restart: on-failure
     environment:
       - DISCORD_TOKEN=MjI0MTAzODk3MDQ2NzEyMzIw.V9PXBA.AtBDbzUqchwCbtmQXvnlIg2Dyzk
-      - PULSAR_IP=pulsar:6650
+      - PULSAR_URL=pulsar://pulsar:6650
     volumes:
       - ./discord/config.yml:/opt/discord/config.yml
     links:
