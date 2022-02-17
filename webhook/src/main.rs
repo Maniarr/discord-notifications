@@ -180,15 +180,6 @@ fn verify_youtube_signature(headers: &HeaderMap, body: &Bytes, secret: &[u8]) ->
     false
 }
 
-#[get("/json")]
-async fn test() -> impl Responder {
-    return HttpResponse::Ok()
-        .header("Bloom-Response-Buckets", "page:donations")
-        .json(json!({
-            "name": "test",
-        }));
-}
-
 #[get("/webhooks/youtube")]
 async fn verify_youtube_webhook(youtube_query: web::Query<YoutubeQuery>, app: web::Data<YoutubeApp>) -> impl Responder {
     let youtube_query = youtube_query.into_inner();
@@ -201,10 +192,7 @@ async fn verify_youtube_webhook(youtube_query: web::Query<YoutubeQuery>, app: we
 }
 
 #[post("/webhooks/youtube")]
-async fn youtube_webhook(req: HttpRequest, body: Bytes, pulsar: web::Data<PulsarState>, redis: web::Data<r2d2::Pool<RedisConnectionManager>>, app: web::Data<YoutubeApp>) -> impl Responder {
-    log::info!("{:?}", req.headers());
-    log::info!("{}", std::str::from_utf8(&body).unwrap());
-    
+async fn youtube_webhook(req: HttpRequest, body: Bytes, pulsar: web::Data<PulsarState>, redis: web::Data<r2d2::Pool<RedisConnectionManager>>, app: web::Data<YoutubeApp>) -> impl Responder {   
     if !verify_youtube_signature(req.headers(), &body, app.hmac_secret.as_bytes()) {
         return HttpResponse::Unauthorized().finish();
     }
@@ -311,7 +299,7 @@ struct TwitchApp {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    std::env::set_var("RUST_LOG", "info,actix_web=info");
+    std::env::set_var("RUST_LOG", "debug,actix_web=debug");
     env_logger::init();
 
     let pulsar: Pulsar<_> = Pulsar::builder(env::var("PULSAR_URL").expect("PULSAR_URL not in environment"), TokioExecutor).build().await.expect("Failed to create pulsar builder");    
@@ -321,6 +309,11 @@ async fn main() -> std::io::Result<()> {
             Ok(token) => Some(token),
             Err(_) => None,
         };
+
+        let manager = RedisConnectionManager::new(env::var("REDIS_URL").expect("REDIS_URL not in environment")).unwrap();
+        let pool = r2d2::Pool::builder()
+            .build(manager)
+            .expect("Failed to build redis pool");
     
         App::new()
             .wrap(Logger::default())
@@ -332,10 +325,10 @@ async fn main() -> std::io::Result<()> {
             .app_data(Data::new(TwitchApp {
                 hmac_secret: env::var("TWITCH_HMAC_SECRET").expect("TWITCH_HMAC_SECRET not in environment"),
             }))
+            .app_data(Data::new(pool))
             .service(twitch_webhook)
             .service(verify_youtube_webhook)
             .service(youtube_webhook)
-            .service(test)
     })
         .bind(env::var("LISTEN_ADDRESS").expect("LISTEN_ADDRESS not in environment"))?
         .run()

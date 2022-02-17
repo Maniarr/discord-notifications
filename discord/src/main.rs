@@ -92,7 +92,7 @@ impl DeserializeMessage for MessageEvent {
 #[async_trait]
 impl EventHandler for Handler {
     async fn ready(&self, ctx: Context, ready: Ready) {
-        println!("{} is connected!", ready.user.name);
+        log::info!("{} is connected!", ready.user.name);
 
         let pulsar: Pulsar<_> = Pulsar::builder(env::var("PULSAR_URL").expect("PULSAR_URL variable not provided"), TokioExecutor).build().await.expect("Failed to build pulsar client");
 
@@ -110,11 +110,12 @@ impl EventHandler for Handler {
         let mut cache: HashMap<String, bool> = HashMap::new();
 
         while let Some(message) = consumer.try_next().await.expect("Failed to consume message") {
-            log::info!("metadata: {:?}", message.metadata());
-            log::info!("id: {:?}", message.message_id());
+            log::info!("new event from pulsar");
         
             match message.deserialize() {
                 Ok(MessageEvent::Youtube(video)) => {
+                    log::info!("Youtube event");
+
                     if !cache.contains_key(&video.id) {
                         if let Some(entries) = self.youtube.get(video.channel_id.as_str()) {
                             let mut handlebars = Handlebars::new();
@@ -124,17 +125,21 @@ impl EventHandler for Handler {
                                 ChannelId(channel_id.clone()).say(&ctx.http, handlebars.render_template(message_format, &json!({"video_link": video.link})).unwrap()).await;
                             }
 
-                            consumer.ack(&message).await;
+                            dbg!(consumer.ack(&message).await);
 
                             cache.insert(video.id.clone(),true);
+
+                            log::info!("Message sended to discord");
                         } else {
-                            println!("Channel id not found in youtube mapping {}", &video.channel_id);
+                            log::info!("Channel id not found in youtube mapping {}", &video.channel_id);
                         }
                     } else {
-                         println!("Video in cache, skip the message");
+                         log::info!("Video in cache, skip the message");
                     }
                 },
                 Ok(MessageEvent::Twitch(event)) => {
+                    log::info!("Twitch stream online event");
+
                     match event.event {
                         TwitchEvent::StreamOnline { broadcaster_user_id, broadcaster_user_name, broadcaster_user_login, started_at, ..} => {
                             if let Some(online_mapping) = self.twitch.get(&event.event_type) {
@@ -146,11 +151,15 @@ impl EventHandler for Handler {
                                         ChannelId(channel_id.clone()).say(&ctx.http, handlebars.render_template(message_format, &json!({"broadcaster_name": broadcaster_user_name, "broadcaster_login": broadcaster_user_login})).unwrap()).await;
                                     }
                                                 
-                                    consumer.ack(&message).await;
+                                    dbg!(consumer.ack(&message).await);
+
+                                    log::info!("Message sended to discord");
                                 }
                             }
                         },
                         TwitchEvent::StreamOffline { broadcaster_user_id, broadcaster_user_name, broadcaster_user_login, .. } => {
+                            log::info!("Twitch stream offline event");
+
                             if let Some(online_mapping) = self.twitch.get(&event.event_type) {
                                 if let Some(entries) = online_mapping.get(&broadcaster_user_id) {
                                     let mut handlebars = Handlebars::new();
@@ -160,7 +169,9 @@ impl EventHandler for Handler {
                                         ChannelId(channel_id.clone()).say(&ctx.http, handlebars.render_template(message_format, &json!({"broadcaster_name": broadcaster_user_name})).unwrap()).await;
                                     }
 
-                                    consumer.ack(&message).await;
+                                    dbg!(consumer.ack(&message).await);
+
+                                    log::info!("Message sended to discord");
                                 }
                             }
                         },
@@ -188,6 +199,6 @@ async fn main() {
     let mut client = Client::builder(&token).event_handler(handler).await.expect("Err creating client");
     
     if let Err(why) = client.start().await {
-        println!("Client error: {:?}", why);
+        log::error!("Client error: {:?}", why);
     }
 }

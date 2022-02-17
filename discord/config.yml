@@ -17,7 +17,6 @@ twitch:
       89756262492803072: "{{ broadcaster_name }} commence à dessiner"
 
     86831929: # Maniarr_
-      89756262492803072: "{{ broadcaster_name }} start his stream"
       89756262492803072: "Le live vient de se lancer, tu as juste le temps de préparer ton thé avant que **Clara** arrive. Alors dépêche toi ! <:TeaTime:773127989889073173>\nhttps://twitch.tv/{{ broadcaster_login }}"
     450771047: # Clararunaway
       772961879010050111: "@everyone Le live vient de se lancer, tu as juste le temps de préparer ton thé avant que **Clara** arrive. Alors dépêche toi ! <:TeaTime:773127989889073173>\nhttps://twitch.tv/{{ broadcaster_login }}"
