@@ -9,6 +9,8 @@ WORKDIR /workspace
 
 RUN cargo build --release
 
+RUN strip /workspace/target/release/webhook
+
 FROM debian:buster-slim
 
 RUN apt-get update && apt-get install -y ca-certificates
