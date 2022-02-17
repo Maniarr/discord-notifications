@@ -202,6 +202,9 @@ async fn verify_youtube_webhook(youtube_query: web::Query<YoutubeQuery>, app: we
 
 #[post("/webhooks/youtube")]
 async fn youtube_webhook(req: HttpRequest, body: Bytes, pulsar: web::Data<PulsarState>, redis: web::Data<r2d2::Pool<RedisConnectionManager>>, app: web::Data<YoutubeApp>) -> impl Responder {
+    log::info!("{:?}", req.headers());
+    log::info!("{}", std::str::from_utf8(&body).unwrap());
+    
     if !verify_youtube_signature(req.headers(), &body, app.hmac_secret.as_bytes()) {
         return HttpResponse::Unauthorized().finish();
     }

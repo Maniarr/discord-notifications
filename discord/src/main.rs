@@ -176,7 +176,7 @@ impl EventHandler for Handler {
 
 #[tokio::main]
 async fn main() {
-    std::env::set_var("RUST_LOG", "info");
+    std::env::set_var("RUST_LOG", "discord=info");
     env_logger::init();
     
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
