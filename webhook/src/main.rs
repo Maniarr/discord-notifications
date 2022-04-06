@@ -206,8 +206,8 @@ async fn youtube_webhook(req: HttpRequest, body: Bytes, pulsar: web::Data<Pulsar
             if cache.is_none() {
                 match pulsar
                     .producer()
-                    .with_name("webhook_youtube")
-                    .with_topic("notifications_youtube")
+                    .with_name(env::var("TOPIC_YOUTUBE").expect("TOPIC_YOUTUBE variable not provided"))
+                    .with_topic(env::var("TOPIC_YOUTUBE").expect("TOPIC_YOUTUBE variable not provided"))
                     .build()
                     .await {
                         Ok(mut producer) => {
@@ -255,8 +255,8 @@ async fn twitch_webhook(req: HttpRequest, body: Bytes, pulsar: web::Data<PulsarS
 
         match pulsar
             .producer()
-            .with_name("webhook_twitch")
-            .with_topic("notifications_twitch")
+            .with_name(env::var("TOPIC_TWITCH").expect("TOPIC_TWITCH variable not provided"))
+            .with_topic(env::var("TOPIC_TWITCH").expect("TOPIC_TWITCH variable not provided"))
             .build()
             .await {
             Ok(mut producer) => {

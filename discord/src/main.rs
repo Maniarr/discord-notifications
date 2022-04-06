@@ -96,12 +96,18 @@ impl EventHandler for Handler {
 
         let pulsar: Pulsar<_> = Pulsar::builder(env::var("PULSAR_URL").expect("PULSAR_URL variable not provided"), TokioExecutor).build().await.expect("Failed to build pulsar client");
 
+        let topics_with_comma = env::var("TOPICS_LISTEN").expect("TOPICS_LISTEN variable not provided");
+
+        let topics: Vec<&str> = topics_with_comma
+            .split(',')
+            .collect();
+
         let mut consumer: Consumer<MessageEvent, _> = pulsar
             .consumer()
-            .with_topics(["notifications_youtube", "notifications_twitch"])
-            .with_consumer_name("discord_notifications")
+            .with_topics(topics)
+            .with_consumer_name(env::var("CONSUMER_NAME").expect("CONSUMER_NAME variable not provided"))
             .with_subscription_type(SubType::Shared)
-            .with_subscription("discord_notifications")
+            .with_subscription(env::var("CONSUMER_NAME").expect("CONSUMER_NAME variable not provided"))
             .with_batch_size(10)
             .build()
             .await
