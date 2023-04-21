@@ -1,5 +1,5 @@
 [package]
-name = "webhook"
+name = "webhook_gateway"
 version = "0.1.0"
 authors = ["Maniarr <nicolas@maniarr.fr>"]
 edition = "2021"

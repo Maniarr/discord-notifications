@@ -17,10 +17,11 @@ services:
     environment:
       - PULSAR_URL=pulsar://pulsar:6650
       - YOUTUBE_HMAC_SECRET=passwordpassword
-      # - YOUTUBE_VERIFY_TOKEN=
       - TWITCH_HMAC_SECRET=s3cRe7s3cRe7
       - LISTEN_ADDRESS=0.0.0.0:8011
       - REDIS_URL=redis://redis
+      - TOPIC_YOUTUBE=notifications_youtube
+      - TOPIC_TWITCH=notifications_twitch
     ports:
       - 127.0.0.1:8011:8011
     links:
@@ -32,7 +33,9 @@ services:
       context: discord
     restart: on-failure
     environment:
-      - DISCORD_TOKEN=MjI0MTAzODk3MDQ2NzEyMzIw.V9PXBA.AtBDbzUqchwCbtmQXvnlIg2Dyzk
+      - TOPICS_LISTEN=notifications_youtube,notifications_twitch
+      - CONSUMER_NAME=flute_consumer
+      - DISCORD_TOKEN=xxx
       - PULSAR_URL=pulsar://pulsar:6650
     volumes:
       - ./discord/config.yml:/opt/discord/config.yml

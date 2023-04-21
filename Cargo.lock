@@ -772,7 +772,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "discord"
+name = "discord_consumer"
 version = "0.1.0"
 dependencies = [
  "chrono",
@@ -2863,7 +2863,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "webhook"
+name = "webhook_gateway"
 version = "0.1.0"
 dependencies = [
  "actix-web",

@@ -2,7 +2,7 @@ use std::env;
 
 use serenity::{
     async_trait,
-    model::{channel::Message as DiscordMessage, gateway::Ready},
+    model::{channel::{Message as DiscordMessage, ChannelType}, gateway::Ready},
     prelude::*,
 };
 use serenity::model::id::ChannelId;
@@ -121,6 +121,7 @@ impl EventHandler for Handler {
             match message.deserialize() {
                 Ok(MessageEvent::Youtube(video)) => {
                     log::info!("Youtube event");
+                    println!("{:?}", &video);
 
                     if !cache.contains_key(&video.id) {
                         if let Some(entries) = self.youtube.get(video.channel_id.as_str()) {
@@ -145,6 +146,7 @@ impl EventHandler for Handler {
                 },
                 Ok(MessageEvent::Twitch(event)) => {
                     log::info!("Twitch stream online event");
+                    log::debug!("{:?}", &event);
 
                     match event.event {
                         TwitchEvent::StreamOnline { broadcaster_user_id, broadcaster_user_name, broadcaster_user_login, started_at, ..} => {
@@ -154,7 +156,23 @@ impl EventHandler for Handler {
                                     handlebars.register_escape_fn(handlebars::no_escape);
                                                 
                                     for (channel_id, message_format) in entries {
-                                        ChannelId(channel_id.clone()).say(&ctx.http, handlebars.render_template(message_format, &json!({"broadcaster_name": broadcaster_user_name, "broadcaster_login": broadcaster_user_login})).unwrap()).await;
+                                        match ChannelId(channel_id.clone()).say(&ctx.http, handlebars.render_template(message_format, &json!({"broadcaster_name": broadcaster_user_name, "broadcaster_login": broadcaster_user_login})).unwrap()).await {
+                                            Ok(message) => {
+                                                log::info!("{:?}", &message);
+
+                                                // We need to trigger a crosspost message in the news channels so that it is sent to all of the follower channels.
+                                                // if let Ok(channel) = ChannelId(channel_id.clone()).to_channel(&ctx.http).await {
+                                                //     if let Some(guild_channel) = channel.guild() {
+                                                //         if ChannelType::News == guild_channel.kind {
+                                                //             message.crosspost(&ctx.http).await;
+                                                //         }
+                                                //     }
+                                                // }
+                                            },
+                                            Err(error) => {
+                                                log::error!("{}", error);
+                                            }
+                                        };
                                     }
                                                 
                                     dbg!(consumer.ack(&message).await);

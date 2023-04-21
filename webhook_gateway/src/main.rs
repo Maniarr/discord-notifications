@@ -211,6 +211,8 @@ async fn youtube_webhook(req: HttpRequest, body: Bytes, pulsar: web::Data<Pulsar
                     .build()
                     .await {
                         Ok(mut producer) => {
+                            println!("{:?}", &video);
+
                             match producer.send(EventYoutubeVideo::from(&video)).await {
                                 Ok(promise) => {
                                     dbg!(promise.await);

@@ -1,5 +1,5 @@
 [workspace]
 members = [
-    "webhook",
-    "discord"
+    "webhook_gateway",
+    "discord_consumer"
 ]
